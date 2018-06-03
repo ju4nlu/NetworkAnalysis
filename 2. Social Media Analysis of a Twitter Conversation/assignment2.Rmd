@@ -1,0 +1,352 @@
+---
+title: 'Assignment 2: Social Media Analysis of a Conversation in Twitter'
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+Juan Luis Gómez Chanclón -- 24/05/2018 -- Universidad Carlos III de Madrid
+
+# 1. Introduction
+In this assignment we are going to retrieve some tweets which are related to a specific topic. Once we've got the tweets, we will perform different analysis so that we can learn things about the community tweeting them. In our case, the chosen topic is going to be [Tesla](https://www.tesla.com/es_ES/). After looking for tweets with the word "Tesla" on them, we obtained a huge amount of tweets which didn't fulfill the requirements (tweets happened only during one day). That's why finally the search has been set to "Tesla Autopilot", which is the system offered by Tesla on their cars.
+
+![*Figure 1: Tesla Autopilot doing its magic.*](https://electrek.files.wordpress.com/2018/04/screen-shot-2018-04-25-at-10-14-46-pm.jpg?quality=82&strip=all&w=1600)
+
+To do so, we are going to use the following packages:
+
+* `rtweet`
+* `igraph`
+* `dplyr`
+* `syuzhet`
+* `wordcloud`
+* `tm`
+* `corrplot`
+
+```{r include=FALSE}
+rm(list = ls());gc()
+# Load the libraries using Pacman
+require("pacman")
+pacman::p_load(igraph,rtweet,dplyr,syuzhet,wordcloud,tm,corrplot,ggplot2)
+
+#library(rtweet)	 # Twitter API
+#library(igraph)	
+#library(dplyr)
+
+#require("devtools")
+#install_url("http://cran.r-project.org/src/contrib/Archive/Rstem/Rstem_0.4-1.tar.gz")	
+#install_url("http://cran.r-project.org/src/contrib/Archive/sentiment/sentiment_0.2.tar.gz")
+#require(syuzhet) # Sentiment Analysis
+
+#library(wordcloud)
+#require(tm)	# Text mining
+
+#library(corrplot) # Plot correlation
+```
+
+# 2. Obtaining the data
+
+First we need to set up the Twitter API connection.
+
+```{r, results='hide'}
+# Parameters
+appname <- "Networks_Tesla"	
+key <- "GPTTqFFofTsfGBGWYke7FtOhx"	
+secret <- "ZmnhLUDPhf0WfFiPPLtCHL2nMrXL0fHjobIhDnvSbOGjvovaO4"
+
+# Twitter connection
+twitter_token <- create_token(	
+  app = appname,	
+  consumer_key = key,	
+  consumer_secret = secret)	
+```
+
+Finally, we can retrieve tweets using the `search_tweets` function. We are going to specify "Tesla autopilot" as the words which the tweet has to contain. Besides that, we are only selecting English tweets, as later on we will perform sentiment analysis on them.
+
+```{r}
+# Retrieve tweets
+# tesla_tweets <- search_tweets(q = "Tesla autopilot", n = 20000, lang = "en", include_rts = TRUE, retryonratelimit = TRUE)
+
+# Store them in a file
+# save(tesla_tweets,file="./data/tweets_tesla.RData")
+
+# Retrieve tweets from a file
+tesla_tweets <- get(load("./data/tweets_tesla.RData"))
+```
+
+Let's check the information available for each tweet.
+
+```{r}
+head(tesla_tweets)
+```
+
+And also, how many tweets and RTs we have gathered.
+
+```{r}
+# Total number of tweets
+nrow(tesla_tweets)
+
+# Number of original tweets
+nrow(tesla_tweets[tesla_tweets$is_retweet==FALSE,])
+
+# Number of RTs
+nrow(tesla_tweets[tesla_tweets$is_retweet==TRUE,])
+```
+
+Nice! Now the data is ready, we can start working with it!
+
+# 3. Sentiment Analysis
+
+In this first analysis, we are going to classify the tweets depending on the sentiment expressed on them. The first step is stripping down the data, so that we only work with the text of the tweet.
+
+```{r}
+# Array with all the tweets
+tesla_texts <- tesla_tweets$text
+head(tesla_texts)
+```
+
+As can be seen, tweets are ugly. This means that first we need to clean the data, so that only text appears on it. We should remove things such as:
+
+* Retweets (RT tag)
+* Mentions
+* Links
+* Emojis
+* Digits
+* Punctuacion and white spaces
+
+Let's proceed!
+
+```{r}
+tesla_texts <- iconv(tesla_texts,"UTF-8","latin1",sub="") # emojis, end-of-line characters	
+tesla_texts <- gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tesla_texts) # retweets 	
+tesla_texts <- gsub("@\\w+", "", tesla_texts) # mentions	
+tesla_texts <- gsub("[[:punct:]]", "", tesla_texts) # punctuation	
+tesla_texts <- gsub("[[:digit:]]", "", tesla_texts) # numbers	
+tesla_texts <- gsub("http\\w+", "", tesla_texts) # html links	
+tesla_texts <- gsub("[ \t]{2,}", "", tesla_texts) # unnecessary spaces	
+tesla_texts <- gsub("[\r\n]", "", tesla_texts) # next line jumps
+tesla_texts <- gsub("^\\s+|\\s+$", "", tesla_texts)	
+
+# check the results
+head(tesla_texts)
+```
+
+Alright, so now we have plain text, which is going to be the input to our sentiment analysis tools.
+
+```{r}
+tesla_polarity <- get_sentiment(tesla_texts,method="bing")
+```
+
+Let's check which are the top-10 tweets with most positive polarity *(a)*.
+
+```{r}
+sort(tesla_tweets$text[order(tesla_polarity, decreasing = TRUE)[0:10]])
+```
+
+And also the most negative ones.
+
+```{r}
+sort(tesla_tweets$text[order(tesla_polarity, decreasing = FALSE)[0:10]])
+```
+
+Ok, we can see how the results make sense. Now that we have the ranking, we are going to build a wordcloud, so we can see faster which words appear the most in both possitive and negative tweets *(b)*. As we want the wordcloud to contain only significant words, we have to remove the stopwords whitin the text. That's going to be done using the `removeWords` function included in the `tm` package.
+
+```{r}
+tesla_texts <- removeWords(tesla_texts, stopwords("english")) #get rid of stopwords in english	
+head(tesla_texts)
+```
+
+Now we are going the build the *Corpus* of the three different wordclouds we will display.
+
+```{r}
+tesla_corpus_all <- Corpus(VectorSource(tesla_texts))	
+tesla_corpus_pos <- Corpus(VectorSource(tesla_texts[tesla_polarity>=0]))
+tesla_corpus_neg <- Corpus(VectorSource(tesla_texts[tesla_polarity<0]))	
+```
+
+It's essential to build these *Corpus*, because this is the type accepted by function `wordcloud`, that's going to build and display them.
+
+```{r warning=FALSE}
+par(mfrow=c(1,3),mar=c(4,4,1,1))	
+wordcloud(tesla_corpus_all, min.freq = 5, max.words=100, random.order= FALSE, colors=brewer.pal(8,"Dark2"))	
+wordcloud(tesla_corpus_pos, min.freq = 5, max.words=100, random.order= FALSE, colors=brewer.pal(8,"Dark2"))	
+wordcloud(tesla_corpus_neg, min.freq = 5, max.words=100, random.order= FALSE, colors=brewer.pal(8,"Dark2"))
+```
+
+It's clear that these graphs could be improved, so we are going to do so. First of all we are going to remove the words "Tesla" and "Autopilot", because it's obvious that they are going to be the top words in the 3 wordclouds.
+
+```{r}
+# Clean the text again
+tesla_texts_reduced <- tesla_tweets$text
+tesla_texts_reduced <- iconv(tesla_texts_reduced,"UTF-8","latin1",sub="") # emojis, end-of-line characters	
+tesla_texts_reduced <- gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tesla_texts_reduced) # retweets 	
+tesla_texts_reduced <- gsub("@\\w+", "", tesla_texts_reduced) # mentions	
+tesla_texts_reduced <- gsub("[[:punct:]]", "", tesla_texts_reduced) # punctuation	
+tesla_texts_reduced <- gsub("[[:digit:]]", "", tesla_texts_reduced) # numbers	
+tesla_texts_reduced <- gsub("http\\w+", "", tesla_texts_reduced) # html links	
+tesla_texts_reduced <- gsub("[ \t]{2,}", "", tesla_texts_reduced) # unnecessary spaces	
+tesla_texts_reduced <- gsub("[\r\n]", "", tesla_texts_reduced) # next line jumps
+tesla_texts_reduced <- gsub("^\\s+|\\s+$", "", tesla_texts_reduced)
+tesla_texts_reduced <- gsub("[tT]esla", "", tesla_texts_reduced)
+tesla_texts_reduced <- gsub("[aA]utopilot", "", tesla_texts_reduced)
+
+# Obtain the polarity again
+tesla_polarity_reduced <- get_sentiment(tesla_texts_reduced,method="bing")
+
+# Remove stopwords
+tesla_texts_reduced <- removeWords(tesla_texts_reduced, stopwords("english")) 
+
+# Get the corpus
+tesla_corpus_all_reduced <- Corpus(VectorSource(tesla_texts_reduced))	
+tesla_corpus_pos_reduced <- Corpus(VectorSource(tesla_texts_reduced[tesla_polarity>=0]))	
+tesla_corpus_neg_reduced <- Corpus(VectorSource(tesla_texts_reduced[tesla_polarity<0]))
+```
+
+Now we can plot the new improved wordclouds.
+
+```{r warning=FALSE}
+colors_all = rev(colorRampPalette(brewer.pal(9,"Blues"))(32)[seq(8,32,6)])
+wordcloud(tesla_corpus_all_reduced, min.freq = 5, max.words=100, random.order= FALSE, colors=colors_all, scale=c(3,.5))	
+
+colors_pos = rev(colorRampPalette(brewer.pal(9,"Greens"))(32)[seq(8,32,6)])
+wordcloud(tesla_corpus_pos_reduced, min.freq = 1, max.words=100, random.order= FALSE, colors=colors_pos, scale=c(3,.5))	
+
+colors_neg = rev(colorRampPalette(brewer.pal(9,"Reds"))(32)[seq(8,32,6)])
+wordcloud(tesla_corpus_neg_reduced, min.freq = 5, max.words=100, random.order= FALSE, colors=colors_neg, scale=c(3,.5))
+```
+
+It's visible that the most important words in the positive wordcloud are *best*, *thank* or *consumer*. On the other hand, the words with higher impact on the negative cloud are *crash* and *dead*. Same pattern repeats in the wordcloud which contains both possitive and negative tweets. Looks like, in general, people is more interested in the crashes than in the safety of the system. It's important to know that this is a hot topic right now, as some days ago a [Tesla Model S crashed while having Autopilot on](https://abcnews.go.com/Technology/wireStory/police-report-tesla-autopilot-sped-utah-crash-55424283). That's probably the reason why negative comments are higher in number at the moment. 
+
+# 4. Interaction between users using RTs
+
+In this section, we are going to build a graph in which each node is an user. In that graph, a link between A and B means that A has retweeted a tweet coming from B.
+
+Now we are going to filter to obtain only RTs and store their index in variable `rts`.
+
+```{r}
+# Clean the text a little bit
+tesla_tweets$text <- iconv(tesla_tweets$text,"UTF-8","ASCII",sub="") # get rid of emojis, strange caracters
+tesla_tweets$text <- gsub("\n","",tesla_tweets$text) # get rid of end-of-line 
+
+# Obtain only retweets
+rts <- rts <- grep("^rt @[a-z0-9_]{1,15}", tolower(tesla_tweets$text), perl=T)	
+head(tesla_tweets$text[rts])
+```
+
+Obtain the name of the sender and the receiver of the RT.
+
+```{r}
+rt.sender <- gsub("^.*@([a-z0-9_]{1,15})+.*$", "\\1",tolower(tesla_tweets$screen_name[rts]), perl=T)
+rt.receiver <- gsub("^rt @([a-z0-9_]{1,15}):+.*$", "\\1", tolower(tesla_tweets$text[rts]), perl=T)
+```
+
+Finally, the graph is built using the information stored in `rt.sender` and `rt.receiver`.
+
+```{r}
+# Obtain the list with the edges
+edgelist <- data.frame(rt.sender,rt.receiver,stringsAsFactors=F)
+
+# Build and plot the graph
+g <- graph.data.frame(edgelist)
+plot(g,vertex.size=2,edge.arrow.size=.01,asp=5/10,vertex.label.cex=0.2)
+```
+
+The graph can't get any better than that unless we reduce the number of nodes displayed. For that reason, we are going to modify it so only the biggest component appears. This is going to be useful because we want to study the relationships between users, not the isolated users (at least not in this study).
+
+```{r}
+par(mar=c(0,0,0,0))
+cc <- clusters(g)
+g0 <- delete.vertices(g,which(cc$membership!=which.max(cc$csize)))
+
+plot(g0,vertex.size=2,edge.arrow.size=.01,asp=5/10,vertex.label.cex=0.2)
+```
+
+# 5. User influence metrics
+
+At this point, by taking a look at the previous graph, we can guarantee that some users are much more important than others. Now, we are going to build rankings based on different metrics, which are:
+
+* *Activity*: We are going to build a top-10 of users with most tweets including our hot words "Tesla Autopilot". We need to take into account that not because an user tweets a lot it means that he is an influencer in the topic!
+
+* *RTs received*: We will just count the number of RT per user. In this case, a larger number of RTs is related to the importance of the user receiving the RT. In this section, we expect users such as `@elonmusk` or `@teslamotors` to have the biggest number of RTs.
+
+* *Centrality*: To be specific, we will obtain the PageRank centrality. This metric is going to rank each user depending on their importance, as it's going to select a node as important if it is RT'd by other important nodes.
+
+```{r}
+# Activity table
+activity <- data.frame(table(tolower(tesla_tweets$screen_name)))	
+colnames(activity) <- c("user","ntweets")
+
+# Degree and Centrality (RT related)
+degRT <- degree(g0,mode="in") #consider only incoming RTs	
+cenRT <- page_rank(g0)$vector
+
+# Table mergin all the data
+influenceRT <- data.frame(user=V(g0)$name,degRT,cenRT)
+influence <- merge(activity,influenceRT)	
+
+# top-10 by activity
+arrange(influence,desc(ntweets))[0:10,]
+
+# top-10 by number of RTs
+arrange(influence,desc(degRT))[0:10,]
+
+# top-10 by PageRank centrality
+arrange(influence,desc(cenRT))[0:10,]
+```
+
+Turns out that, as we expected, the user with the most number of tweets ,`@kirillklip`, is not the most influencial one. The most important node couldn't be other but `@elon_musk`, the beloved CEO. Some of the most influencial accounts are `@lexfridman` (MIT self-driving cars professor), `@mattlevinson` (happy Tesla customer) or `@abc` (news account). Also, it's interesting that two personal accounts and unrelated to Tesla, `@issyelliot` and `@kirillklip` are in the top-5. I guess this happened because this data comes from a 10 day span, if we took months or years of data, these personal accounts probably wouldn't appear at the top-5.
+
+# 6. Correlation between polarity and influence
+
+As the last step, we are going to study if there is any correlation between polarity and influence. One may think that, due to Twitter's nature, negatives tweets may have bigger influence than possitive ones. Let's finds out!
+
+```{r}
+# Add the polarity to each tweet in the dataset
+tesla_tweets["polarity"] <- get_sentiment(tesla_texts, method="bing")
+
+# Obtain the average polarity of each user
+avg_polarity <- aggregate(tesla_tweets$polarity, by=list(tesla_tweets$screen_name), FUN=mean)
+colnames(avg_polarity) <- c("user","avgPOL")
+
+# Add it to the table
+influence_final <- merge(avg_polarity,influence)
+
+# top-10 by polarity
+arrange(influence_final,desc(avgPOL))[0:10,]
+```
+
+Now that we have obtained the average polarity for each user, let's find out if there is any correlation.
+
+```{r}
+
+#plot(influence_final$avgPOL,influence_final$cenRT, log="y", main = "Correlation Polarity-Centrality(log)", ylab = "log(Centrality)", xlab = "Average Polarity")
+
+ggplot(data=influence_final,aes(x=avgPOL,y=log(cenRT))) + geom_point()	
+
+```
+
+In the graph we can observe that, usually, high polarity implies high centrality. Even though we can see a trend in the graph, it's always better to check the numbers, as well as the correlation among all the variables of our table.
+
+```{r}
+M <- cor(influence_final[, 2:5])
+corrplot(M, method = "circle")
+
+cor(influence_final$avgPOL,influence_final$cenRT)
+cor(influence_final$avgPOL,influence_final$ntweets)
+```
+
+After taking a look at the correlation between them (0.03289878), we could say that there is no correlation at all. There is an almost invisible positive correlation, but nothing serious. We can observe a bigger positive correlation between `avgPOL` and `ntweets`, meaning that users with more tweets tend to be more positive.
+
+# 7. Conclusions
+
+We have studied different aspects of our datasets, which has helped us get an insight of the people talking about "Tesla Autopilot". This analysis could've been more generalized if we had data from different months, but due to computing power and time it was not possible. In the case we were about to build an strategy to empoyer Tesla's Autopilot image, we would have the information to target the most relevants targets.
+
+There are still some aspects that have to be improved, such as:
+
+* Better visualization of the RTs graphs.
+* Analyze a much bigger amount of data.
+* Using more attributed of the tweets to identify such as `geo_coords`, `mentions_user_id` or `favorite_count`.
+
+Overall, I'm pretty happy with the job and, as soon as I get some free time, I will try improve it.
+
+
+[This was presented as an assignment for *Network analysis and data visualization*, course taught by [Esteban Moro](https://twitter.com/estebanmoro) and part of [UC3M's Master in Big Data Analytics](https://www.uc3m.es/ss/Satellite/Postgrado/en/Detalle/Estudio_C/1371210340413/1371219633369/Master_in_Big_Data_Analytics). Most of the code was provided by Esteban Moro, but several modifications have been added.]

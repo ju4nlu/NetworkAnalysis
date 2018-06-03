@@ -1,0 +1,124 @@
+---
+title: "First Assignment"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+*Juan Luis Gómez Chanclón - 03/05/2018*
+```{r, include=FALSE}
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+```{r, include=FALSE}
+# Load the libraries using Pacman
+require("pacman")
+pacman::p_load(igraph,visNetwork,dplyr,igraphdata,jsonlite)
+```
+
+## Introduction
+In this exercise, we are going to work with software graph data. Specifically, it is data regarding MySQL calls between functions. Each node is a function and two nodes are linked if one function calls the other. Based on this, this is an directed and unweighted graph.
+
+Before we start working with the graph, first we will load into into variable `mysql`, loading the contents from the downloaded .txt file ([source](http://cbsu.tc.cornell.edu/staff/myers/Data/SoftwareGraphs/)):
+```{r, results='hide'}
+setwd("C:/Users/DIECI/Desktop/uc3m/GRaph Analysis/assingment1/data")
+data <- read.table("mysql.txt")
+mysql <- graph.data.frame(data, directed=TRUE)
+```
+
+## Network Analysis
+Now we are going to get insights of the graph by answering several questions.
+
+### Number of nodes and links
+```{r}
+# Number of nodes
+vcount(mysql)
+
+# Number of links
+ecount(mysql)
+```
+
+### Average degree and standard deviation
+```{r}
+# Get the degrees
+mysql.degrees <- degree(mysql, mode="all")
+
+# Average degree
+mean(mysql.degrees)
+
+# Standard deviation
+sd(mysql.degrees)
+```
+
+### Degree distribution
+```{r}
+plot(degree_distribution(mysql, cumulative=T), type="s", ylab = "Cummulative Frequency", xlab = "Degree",
+     main = "Cummulative Degree Distribution (Lin-Lin)")
+
+plot(degree_distribution(mysql, cumulative=T), type="s", log="xy", xlab="Degree", ylab="Cumulative Frequency",
+     main = "Cummulative Degree Distribution (Log-Log)")
+
+# Maximum degree
+max(mysql.degrees)
+# That corresponds to function
+V(mysql)[degree(mysql) == max(mysql.degrees)]
+```
+
+### Clustering coefficient
+The clustering coefficient is not very significant per se. We are also going to build a statistical test which is going to simulate several models (a thousand) in the null case. Once we have done that, we will compare our real clustering coefficient to the histogram obtained.
+```{r}
+# Clustering coefficient
+transitivity(mysql)
+
+# Statistical Test
+n <- 1000
+tt <- rep(0,1000) 
+
+for(i in 1:1000) 
+    tt[i] <- transitivity(degree.sequence.game(degree(mysql)))
+
+hist(tt)
+```
+
+As can be seen, 0.057 can not be explained by random fluctuations. If we take a look at the histogram, 0.057 will be much above the values that can be explained using this model.
+
+### Network assortativity
+We know that the assortativity coefficient is positive is similar vertices tend to connect to each, and negative otherwise.
+```{r}
+assortativity_degree(mysql)
+```
+In this case we have a value which is close to zero and negative. This means that there is a trend in which low connected nodes are connected to highly connected nodes.
+
+### Looking for communities
+It is not possible to look for communities using the Louvain method, because it only works on undirected graphs. In fact, the improvement to compute communities on directed graph is listed as a wish on its [Github page](https://github.com/igraph/igraph/labels/Wishlist).
+
+To be able to compute it, we are going to convert the graph to undirected. This means that now a link between nodes A and B indicates that either A calls B or B calls A. 
+```{r}
+mysql.un <- as.undirected(mysql)
+mysql.louvain <- cluster_louvain(mysql.un,weights=NULL)
+sizes(mysql.louvain)
+```
+We have around 1500 nodes and the Louvain method has been able to generate only 26 communities. This indicates that our graph has indeed a community structure, let's see it!
+```{r}
+plot(mysql.louvain, mysql.un, vertex.label = NA)
+```
+Finally, let's obtain the modularity
+```{r}
+modularity(mysql.louvain)
+```
+The modularity value shows that we were right, this graph presents a community structure, as we have obtained a big modularity value.
+
+### Statistical test in the clustering coefficient
+This action has already been performed in [this previous section](#clustering-coefficient).
+
+### Neighbourhood of the largest centrality node
+```{r, warning=FALSE}
+# Closeness
+1/closeness(mysql)[1]
+```
+The node with the largest centrality is `main`. 
+```{r, fig.width=7, fig.height=7}
+# We get the list of graphs and select just the first element
+plot(make_ego_graph(mysql,1,"main")[[1]], vertex.label.cex = 0.8, edge.arrow.size=0.1)
+```
+
